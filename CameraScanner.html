@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOS – Kamera QR</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f6fb;color:#17233c;font-family:Arial,sans-serif}.top{background:#203f8f;color:#fff;padding:18px;text-align:center}.wrap{max-width:760px;margin:22px auto;padding:0 14px}.card{background:white;border:1px solid #dfe7f2;border-radius:16px;padding:18px;box-shadow:0 2px 8px #10244a10}.mode{display:inline-block;padding:8px 13px;border-radius:20px;font-weight:bold;background:#fff2d2;color:#9a5a00}.mode.in{background:#dcfce7;color:#08784d}#reader{width:100%;margin:18px auto;border-radius:12px;overflow:hidden;background:#10182c;min-height:270px}button,select{font-size:16px;padding:12px 15px;border:0;border-radius:9px;font-weight:bold}button{background:#2563eb;color:#fff}button.stop{background:#dc2626}select{border:1px solid #cbd5e1;background:white;max-width:100%}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.status{padding:13px;border-radius:10px;background:#eff6ff;margin-top:14px;line-height:1.5}.status.ok{background:#dcfce7;color:#166534}.status.err{background:#fee2e2;color:#991b1b}.small{font-size:13px;color:#64748b;line-height:1.5}.profile{margin-top:12px;padding:14px;background:#f8fafc;border-radius:12px;display:none}.profile img{width:70px;height:70px;object-fit:cover;border-radius:50%;float:left;margin-right:12px}@media(max-width:500px){.wrap{margin:12px auto}.card{padding:13px}#reader{min-height:230px}}
+</style>
+</head>
+<body>
+<header class="top"><b>SMART OUTING SEMEKPI (SOS)</b><div style="font-size:13px;margin-top:5px">Pengimbas Kamera QR – Pintu Pagar</div></header>
+<main class="wrap"><section class="card">
+<div class="actions"><span id="mode" class="mode">MOD KELUAR</span><span class="small">Sesi kamera selamat sementara</span></div>
+<div id="reader"></div>
+<div class="actions"><select id="cameraSelect"><option value="">Kamera belakang / lalai</option></select><button id="startBtn" onclick="startCamera()">Buka Kamera</button><button class="stop" onclick="stopCamera()">Henti</button></div>
+<div id="status" class="status">Menyediakan pengimbas. Benarkan akses kamera apabila diminta.</div>
+<div id="profile" class="profile"></div>
+<p class="small">Jika kamera tidak bermula, semak kebenaran Camera untuk laman ini pada Chrome dan pastikan laman dibuka menggunakan HTTPS. Tutup tab ini selepas selesai bertugas.</p>
+</section></main>
+<script>
+const params=new URLSearchParams(location.search);
+const WEB_APP=params.get('webApp')||'';
+const TICKET=params.get('ticket')||'';
+const DIRECTION=(params.get('direction')||'KELUAR').toUpperCase();
+let scanner=null, busy=false, cameras=[];
+const $=id=>document.getElementById(id);
+$('mode').textContent='MOD '+DIRECTION;
+if(DIRECTION==='MASUK')$('mode').classList.add('in');
+function status(msg,type=''){const el=$('status');el.className='status '+type;el.textContent=msg;}
+function jsonpScan(code){return new Promise((resolve,reject)=>{
+  const cb='sosCb'+Date.now()+Math.floor(Math.random()*10000);
+  const script=document.createElement('script');
+  const cleanup=()=>{delete window[cb];script.remove();};
+  window[cb]=data=>{cleanup();data&&data.ok?resolve(data.data):reject(new Error(data&&data.error||'Imbasan gagal.'));};
+  script.onerror=()=>{cleanup();reject(new Error('Tidak dapat menghubungi pelayan SOS. Semak sambungan internet.'));};
+  script.src=WEB_APP+'?api=scan&ticket='+encodeURIComponent(TICKET)+'&code='+encodeURIComponent(code)+'&callback='+cb+'&_='+Date.now();
+  document.body.appendChild(script);
+});}
+async function initCameras(){
+  if(!WEB_APP||!TICKET){status('Pautan kamera tidak lengkap. Buka kamera melalui butang dalam sistem SOS.','err');$('startBtn').disabled=true;return;}
+  if(!window.Html5Qrcode){status('Pustaka pengimbas QR tidak dapat dimuatkan. Semak internet.','err');return;}
+  try{cameras=await Html5Qrcode.getCameras();const sel=$('cameraSelect');sel.innerHTML='';cameras.forEach((c,i)=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.label||('Kamera '+(i+1));sel.appendChild(o)});status(cameras.length?'Kamera dikesan. Tekan Buka Kamera dan benarkan akses.':'Tiada kamera dikesan.','');}
+  catch(e){status('Tidak dapat mengakses kamera: '+e.message+'. Semak kebenaran Chrome/Windows.','err');}
+}
+async function startCamera(){
+  try{
+    if(!window.Html5Qrcode)throw new Error('Pustaka QR tidak dimuatkan.');
+    if(scanner)await stopCamera(false);
+    scanner=new Html5Qrcode('reader');
+    const selected=$('cameraSelect').value;
+    const config={fps:10,qrbox:(w,h)=>({width:Math.min(260,w-30),height:Math.min(260,h-30)}),aspectRatio:1.0};
+    const success=async decoded=>{
+      if(busy)return;busy=true;status('Kod dikesan: '+decoded+'. Menghantar rekod ke Google Sheets…');
+      try{const r=await jsonpScan(decoded.trim());const p=r.student||{};$('profile').style.display='block';$('profile').innerHTML='<b>'+safe(p.name||'Murid')+'</b><br>'+safe(p.className||'')+' · '+safe(p.id||'')+'<br><b>REKOD '+safe(r.direction)+' BERJAYA</b><br><span class="small">'+new Date(r.timestamp).toLocaleString('ms-MY')+'</span>';status((p.name||'Murid')+' — '+r.direction+' berjaya direkodkan. Sedia untuk imbasan seterusnya.','ok');}
+      catch(e){status(e.message,'err');}
+      finally{setTimeout(()=>busy=false,1800);}
+    };
+    if(selected)await scanner.start(selected,config,success,()=>{});
+    else await scanner.start({facingMode:'environment'},config,success,()=>{});
+    $('startBtn').disabled=true;status('Kamera aktif. Halakan kod QR kad murid ke kamera.','ok');
+  }catch(e){status('Kamera gagal dibuka: '+e.message+'. Pastikan akses kamera dibenarkan untuk laman HTTPS ini.','err');scanner=null;$('startBtn').disabled=false;}
+}
+async function stopCamera(show=true){if(scanner){try{if(scanner.isScanning)await scanner.stop();await scanner.clear();}catch(e){}scanner=null;} $('startBtn').disabled=false;if(show)status('Kamera dihentikan.');}
+function safe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+window.addEventListener('beforeunload',()=>{if(scanner&&scanner.isScanning)scanner.stop();});
+initCameras();
+</script>
+</body></html>
